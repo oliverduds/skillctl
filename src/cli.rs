@@ -95,4 +95,33 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Lista as skills mais baixadas no catálogo skills.sh (dia, semana, mês, em alta ou total)
+    Top {
+        /// Período: dia (24h), semana (7d), mes (30d), alta (hot) ou total (all-time)
+        #[arg(default_value = "dia")]
+        period: String,
+
+        /// Quantidade máxima de resultados
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+
+        /// Emite resultado em JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Busca skills por palavra-chave no catálogo skills.sh
+    Search {
+        /// Termo de busca (ex.: react, pdf, design)
+        query: String,
+
+        /// Quantidade máxima de resultados
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+
+        /// Emite resultado em JSON
+        #[arg(long)]
+        json: bool,
+    },
 }

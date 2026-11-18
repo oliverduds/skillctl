@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod discover;
 mod installer;
 mod models;
 mod scanner;
@@ -10,10 +11,12 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use cli::{Cli, Commands};
 use config::{shorten_home, AppConfig};
+use discover::{DiscoverClient, TrendingPeriod, TrendingSkill};
 use installer::{install_skill, sync_all_symlinks, uninstall_skill, update_skills};
 use models::{AgentTarget, SkillRecord, UpdateStatus};
 use scanner::scan_all_skills;
 use sources::UpdateChecker;
+use std::collections::HashSet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -145,6 +148,49 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        Some(Commands::Top {
+            period,
+            limit,
+            json,
+        }) => {
+            let Some(p) = TrendingPeriod::from_cli_str(&period) else {
+                bail!("Período inválido '{}'. Use: dia, semana, mes, alta ou total.", period);
+            };
+            if !json {
+                eprintln!("Consultando ranking '{}' em skills.sh...", p.label());
+            }
+            let client = DiscoverClient::new();
+            let items = client.fetch_trending(p, limit).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else {
+                let installed: HashSet<String> = scan_all_skills(&config)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.name.to_lowercase())
+                    .collect();
+                print_trending_table(p.label(), &items, &installed);
+            }
+        }
+
+        Some(Commands::Search { query, limit, json }) => {
+            if !json {
+                eprintln!("Buscando '{query}' em skills.sh...");
+            }
+            let client = DiscoverClient::new();
+            let items = client.search_skills(&query, limit).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else {
+                let installed: HashSet<String> = scan_all_skills(&config)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| s.name.to_lowercase())
+                    .collect();
+                print_trending_table(&format!("Busca: \"{query}\""), &items, &installed);
+            }
+        }
     }
 
     Ok(())
@@ -260,6 +306,47 @@ fn print_check_summary(skills: &[SkillRecord], showed_all: bool, only_outdated: 
             );
         }
     }
+}
+
+fn print_trending_table(title: &str, items: &[TrendingSkill], installed: &HashSet<String>) {
+    if items.is_empty() {
+        println!("Nenhuma skill encontrada.");
+        return;
+    }
+
+    println!("\x1b[1;36mRanking skills.sh — {title}\x1b[0m\n");
+    println!(
+        "\x1b[1m{:<4} {:<30} {:<18} {:<10} {:<30} {}\x1b[0m",
+        "#", "SKILL", "DOWNLOADS", "TEND.", "REPOSITÓRIO", "STATUS"
+    );
+    println!("{}", "─".repeat(108));
+
+    for it in items {
+        let name = truncate(&it.name, 28);
+        let src = truncate(&it.source, 28);
+        let spark = it.trend_sparkline.as_deref().unwrap_or("—");
+        let is_inst = installed.contains(&it.name.to_lowercase())
+            || installed.contains(&it.skill_id.to_lowercase());
+        let status = if is_inst {
+            "\x1b[32m✓ instalada\x1b[0m"
+        } else if it.is_official {
+            "\x1b[36m★ oficial\x1b[0m"
+        } else {
+            "\x1b[90mdisponível\x1b[0m"
+        };
+        println!(
+            "{:<4} {:<30} \x1b[33m{:<18}\x1b[0m \x1b[36m{:<10}\x1b[0m {:<30} {}",
+            format!("#{}", it.rank),
+            name,
+            it.metric_label,
+            spark,
+            src,
+            status
+        );
+    }
+
+    println!("\nPara instalar qualquer uma delas:");
+    println!("  \x1b[36mskillctl install <repositorio>@<skill>\x1b[0m  (ou abra `skillctl` e use a opção [3])");
 }
 
 fn truncate(s: &str, max: usize) -> String {
